@@ -1,0 +1,41 @@
+{
+  "language": "Solidity",
+  "sources": {
+    "contracts/FundMe.sol": {
+      "content": "// Get funds from users\n// withdraw funds\n// Set a minimum funding value in USD\n\n// SPDX-License-Identifier: MIT\npragma solidity ^0.8.8;\n\nimport \"./PriceConverter.sol\";\nimport \"@chainlink/contracts/src/v0.8/interfaces/AggregatorV3Interface.sol\";\n\nerror FundMe__NotOwner();\n\n/**\n * @title A contract for crowd funding\n * @author myself:)\n * @notice This contract is to demo a sample funding contract\n * @dev This implements price feeds as our library\n */\ncontract FundMe {\n    using PriceConverter for uint256;\n\n    //uint256 public number;\n    uint256 public constant MINIMUM_USD = 50 * 1e18; //constant because it is assigned once at compile time and never changes.\n    mapping(address => uint256) public addressToAmountFunded;\n\n    address public immutable i_owner; //immutable = variables that we set one time but outside of where they have been declared (see constructor)\n    AggregatorV3Interface public priceFeed;\n\n    // constant and immutable variables are directly stored in the bytecode instead of a storage slot => cheaper\n    constructor(address priceFeedAddress) {\n        i_owner = msg.sender;\n        priceFeed = AggregatorV3Interface(priceFeedAddress);\n    }\n\n    address[] public funders;\n\n    function fund() public payable {\n        //want to be able to set a minimum fund amount in USD\n        // 1. How do we send ETH to this contract? (value parameter in Remix!)\n        //number = 5;\n        require(\n            msg.value.getConversionRate(priceFeed) >= MINIMUM_USD,\n            \"Didn't send enough!\"\n        );\n        // require(getConversionRate(msg.value) >= MINIMUM_USD, \"Didn't send enough!\"); //1e18== 1* 10**18\n        //if require is not met any prior work will be undone => however we have to pay the gas for computations afterwards.\n        // 18 decimals\n        funders.push(msg.sender);\n        addressToAmountFunded[msg.sender] = msg.value;\n    }\n\n    function withdraw() public onlyOwner {\n        /*starting index, ending index, step amount */\n        for (\n            uint256 funderIndex = 0;\n            funderIndex < funders.length;\n            funderIndex = funderIndex + 1\n        ) {\n            // or funderIndex++\n            address funder = funders[funderIndex];\n            addressToAmountFunded[funder] = 0;\n        }\n        // reset the array\n        funders = new address[](0); //brand new funders array with 0 objects in it\n        // actually withdraw the funds\n\n        //transfer, send, call. --> transfer to whoever is calling the function withdraw\n\n        //msg.sender = type of address\n        //payable(msg.sender) = payable address\n        payable(msg.sender).transfer(address(this).balance);\n        //transfer is capped at 2300 gas => throws an error if it goes above. => transfer automatically reverts if the transfer fails.\n        //send is also capped at 2300 gas => if it fails it returns a boolean. => with send it won't throw an error. it returns a bool whether it was successfull or not\n        bool sendSuccess = payable(msg.sender).send(address(this).balance);\n        require(sendSuccess, \"Send failed\"); // send only reverts the transaction if we add a require statement.\n        // call\n        // with call we can call functions without even having the ABI.\n        (bool callSuccess /*bytes memory dataReturned*/, ) = payable(msg.sender)\n            .call{value: address(this).balance}(\"\"); //blank \"\" if we do not want to call any function\n        require(callSuccess, \"Call failed\");\n    }\n\n    modifier onlyOwner() {\n        //require(msg.sender == i_owner, \"sender is not owner!\");\n        if (msg.sender != i_owner) {\n            revert FundMe__NotOwner();\n        }\n        _;\n    }\n\n    //receive and fallback are useful when someone sends funds to our contract accidentaly without calling directly the fund function\n    receive() external payable {\n        fund();\n    }\n\n    fallback() external payable {\n        fund();\n    }\n}\n"
+    },
+    "contracts/PriceConverter.sol": {
+      "content": "// SPDX-License-Identifier: MIT\n\npragma solidity ^0.8.0;\n\nimport \"@chainlink/contracts/src/v0.8/interfaces/AggregatorV3Interface.sol\";\n\n// libriaries cant have any state variables and cant send any ether. All fcts are internal\nlibrary PriceConverter {\n    function getPrice(\n        AggregatorV3Interface priceFeed\n    ) internal view returns (uint256) {\n        // ABI and Address needed to interact with contract from outside\n        // 0xD4a33860578De61DBAbDc8BFdb98FD742fA7028e Goerli Testnet ETH USD\n        //AggregatorV3Interface priceFeed = AggregatorV3Interface(\n        //   0xD4a33860578De61DBAbDc8BFdb98FD742fA7028e\n        //); // if you match the ABI with an address you get a contract!\n        (, int price, , , ) = priceFeed.latestRoundData();\n        // ETH in terms of USD above\n        // 3000.00000000\n        return uint256(price * 1e10); // 1**10\n    }\n\n    function getVersion() internal view returns (uint256) {\n        AggregatorV3Interface priceFeed = AggregatorV3Interface(\n            0xD4a33860578De61DBAbDc8BFdb98FD742fA7028e\n        );\n        return priceFeed.version();\n    }\n\n    function getConversionRate(\n        uint256 ethAmount,\n        AggregatorV3Interface priceFeed\n    ) internal view returns (uint256) {\n        uint256 ethPrice = getPrice(priceFeed);\n        uint256 ethAmountInUsd = (ethPrice * ethAmount) / 1e18;\n        return ethAmountInUsd;\n    }\n}\n"
+    },
+    "@chainlink/contracts/src/v0.8/interfaces/AggregatorV3Interface.sol": {
+      "content": "// SPDX-License-Identifier: MIT\npragma solidity ^0.8.0;\n\ninterface AggregatorV3Interface {\n  function decimals() external view returns (uint8);\n\n  function description() external view returns (string memory);\n\n  function version() external view returns (uint256);\n\n  function getRoundData(uint80 _roundId)\n    external\n    view\n    returns (\n      uint80 roundId,\n      int256 answer,\n      uint256 startedAt,\n      uint256 updatedAt,\n      uint80 answeredInRound\n    );\n\n  function latestRoundData()\n    external\n    view\n    returns (\n      uint80 roundId,\n      int256 answer,\n      uint256 startedAt,\n      uint256 updatedAt,\n      uint80 answeredInRound\n    );\n}\n"
+    }
+  },
+  "settings": {
+    "optimizer": {
+      "enabled": false,
+      "runs": 200
+    },
+    "outputSelection": {
+      "*": {
+        "*": [
+          "abi",
+          "evm.bytecode",
+          "evm.deployedBytecode",
+          "evm.methodIdentifiers",
+          "metadata",
+          "devdoc",
+          "userdoc",
+          "storageLayout",
+          "evm.gasEstimates"
+        ],
+        "": [
+          "ast"
+        ]
+      }
+    },
+    "metadata": {
+      "useLiteralContent": true
+    }
+  }
+}
